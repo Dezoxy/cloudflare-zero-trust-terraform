@@ -1,0 +1,91 @@
+name: Load Azure Key Vault secrets
+description: >
+  Authenticate to Azure with GitHub OIDC and export Key Vault secrets into the
+  job environment. No long-lived credential is stored in GitHub.
+
+inputs:
+  keyvault-name:
+    description: Azure Key Vault name.
+    required: true
+  client-id:
+    description: Entra application (client) ID holding the OIDC federated credential.
+    required: true
+  tenant-id:
+    description: Entra tenant ID.
+    required: true
+  subscription-id:
+    description: Azure subscription containing the vault.
+    required: true
+  folder:
+    description: Optional folder tag to scope the fetch. Empty fetches every secret.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate configuration
+      shell: bash
+      env:
+        KV: ${{ inputs.keyvault-name }}
+        CID: ${{ inputs.client-id }}
+        TID: ${{ inputs.tenant-id }}
+        SID: ${{ inputs.subscription-id }}
+      run: |
+        set -euo pipefail
+        for v in KV CID TID SID; do
+          if [ -z "${!v:-}" ]; then
+            echo "::error::Missing required repository variable for ${v}" >&2
+            exit 1
+          fi
+        done
+
+    # Exchanges the workflow's OIDC token for an Azure access token. Nothing
+    # secret crosses the boundary: the trust is the federated credential on the
+    # Entra app, scoped to this repo and this ref.
+    - name: Azure login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Export secrets into the job environment
+      shell: bash
+      env:
+        KV: ${{ inputs.keyvault-name }}
+        FOLDER: ${{ inputs.folder }}
+      run: |
+        set -euo pipefail
+
+        # Each secret carries an `envvar` tag naming the variable to restore it
+        # to, so the vault owns the mapping and this action stays generic.
+        if [ -z "${FOLDER}" ]; then
+          query="[].{id:name, envvar:tags.envvar}"
+        else
+          query="[?tags.folder=='${FOLDER}'].{id:name, envvar:tags.envvar}"
+        fi
+
+        rows="$(az keyvault secret list --vault-name "${KV}" --query "${query}" -o tsv)"
+        if [ -z "${rows}" ]; then
+          echo "::error::No secrets found in ${KV}${FOLDER:+ (folder ${FOLDER})}" >&2
+          exit 1
+        fi
+
+        count=0
+        while IFS=$'\t' read -r kv_name env_name; do
+          [ -z "${kv_name}" ] && continue
+          if [ -z "${env_name}" ]; then
+            echo "::warning::secret '${kv_name}' has no envvar tag; skipping" >&2
+            continue
+          fi
+          value="$(az keyvault secret show --vault-name "${KV}" --name "${kv_name}" --query value -o tsv)"
+
+          # Mask before export. Without this a secret echoed by any later step
+          # lands in the public build log verbatim.
+          echo "::add-mask::${value}"
+          printf '%s=%s\n' "${env_name}" "${value}" >> "${GITHUB_ENV}"
+          count=$((count + 1))
+        done <<< "${rows}"
+
+        echo "Loaded ${count} secret(s) into the job environment."

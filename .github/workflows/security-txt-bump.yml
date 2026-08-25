@@ -1,0 +1,57 @@
+name: security-txt-expires-bump
+
+# RFC 9116 requires a FUTURE Expires date. The value is static on purpose (a
+# computed timestamp() would produce a permanent diff), which means it will
+# silently lapse unless something bumps it -- and every zone's security.txt
+# becomes non-compliant on the same day.
+#
+# This opens a PR ~4 weeks before expiry. It never merges on its own.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 21 3 *" # 09:00 UTC, 21 March, yearly
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: bump
+        run: |
+          set -euo pipefail
+          new_year=$(( $(date -u +%Y) + 1 ))
+          new_expires="${new_year}-04-21T00:00:00Z"
+          current=$(grep -oE '[0-9]{4}-04-21T00:00:00Z' terraform.tfvars.example | head -1)
+
+          # Idempotent: never downgrade a manual bump.
+          if [[ -n "$current" && ! "$current" < "$new_expires" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already at $current; nothing to do."
+            exit 0
+          fi
+
+          sed -i -E "s/[0-9]{4}-04-21T00:00:00Z/${new_expires}/" terraform.tfvars.example
+          echo "changed=true"           >> "$GITHUB_OUTPUT"
+          echo "new_year=${new_year}"   >> "$GITHUB_OUTPUT"
+
+      - if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_YEAR: ${{ steps.bump.outputs.new_year }}
+        run: |
+          set -euo pipefail
+          branch="chore/security-txt-expires-${NEW_YEAR}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore(security): bump security.txt expires to ${NEW_YEAR}"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(security): bump security.txt expires to ${NEW_YEAR}" \
+            --body "Yearly bump. On merge, every module.security_txt[*] resource replaces because the payload hash changes -- that is expected, and should be the only change in the plan."

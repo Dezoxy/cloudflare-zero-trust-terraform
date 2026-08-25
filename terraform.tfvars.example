@@ -1,0 +1,31 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+#
+# Prefer the environment or a secret store over this file. Nothing here should
+# ever reach a commit -- see the note at the top of variables.tf.
+#
+#   export TF_VAR_cloudflare_api_token=...
+#   export TF_VAR_account_id=...
+
+cloudflare_api_token = "REPLACE_ME"
+account_id           = "REPLACE_ME"
+
+base_domain   = "example.com"
+alias_domains = ["example.net"] # same apps, second hostname -- see modules/access
+
+team_name       = "example-team"
+allowed_idp_ids = ["00000000-0000-0000-0000-000000000000"]
+
+# Real addresses belong in a secret store, not in version control.
+admin_emails = ["admin@example.com"]
+
+# One list drives Tunnel ingress AND DNS, on every domain above.
+app_subdomains = ["grafana", "status", "files"]
+
+# Carved out of the wildcard Access app and served publicly. Each needs its own
+# authentication -- see workers/capability-archive.
+public_bypass_subdomains = ["archive"]
+
+origin_url     = "https://reverse-proxy.internal:443"
+private_subnet = "10.10.0.0/24"
+
+security_txt_expires = "2027-04-21T00:00:00Z"

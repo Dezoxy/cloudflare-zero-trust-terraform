@@ -1,0 +1,21 @@
+// Neither secret appears here. Both are set with `wrangler secret put` and
+// live only in the Worker's secret store:
+//
+//   wrangler secret put SITE_TOKEN
+//   wrangler secret put INGEST_KEY
+//
+// Generate each with: openssl rand -hex 32
+{
+  "name": "capability-archive",
+  "main": "worker.js",
+  "compatibility_date": "2024-11-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "capability-archive",
+      // Replace with the id returned by: wrangler d1 create capability-archive
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}
